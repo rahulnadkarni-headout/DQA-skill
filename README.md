@@ -1,16 +1,29 @@
-# design-audit
+# DQA-skill (Design Quality Audit)
 
-A skill for Claude that produces structured Markdown audit reports comparing a frontend page's implementation against its Figma design reference and the project's active design system.
+A skill for Claude that produces structured Markdown audit reports comparing a live page or
+source code against its Figma design reference and the project's active design system.
+
+Two modes are supported — no codebase access required for URL mode:
+
+| Mode | Who uses it | What is analysed |
+|---|---|---|
+| **URL mode** | Designer with a staging/ODE link | Fetched HTML + linked CSS files |
+| **Codebase mode** | Engineer with source files | Source file imports + styles |
 
 ---
 
 ## What it does
 
-Given a Figma link, page routes, and source files, the skill:
+Given a Figma link and either a live URL or source files, the skill:
 
 1. Fetches design context from Figma (layout, typography, spacing, color tokens, component names)
-2. Analyses the codebase for design system usage, hardcoded constants, legacy imports, and component mapping
-3. Outputs a structured `.md` audit report with severitised findings, migration status, and concrete remediation steps
+2. **URL mode:** Fetches the live page HTML and all linked CSS files; decodes Tailwind classes,
+   extracts CSS custom properties (design tokens), and identifies hardcoded vs token-based values
+3. **Codebase mode:** Analyses source files for design system usage, hardcoded constants,
+   legacy imports, and component mapping
+4. Builds a property comparison table: Figma value vs page/code value, with match status
+5. Outputs a structured `.md` audit report with severitised findings, token usage summary,
+   and concrete remediation steps
 
 The report is always saved as `design-audit-[page-name]-[YYYY-MM-DD].md`.
 
@@ -22,24 +35,33 @@ The report is always saved as `design-audit-[page-name]-[YYYY-MM-DD].md`.
 - "Check how closely our implementation matches the Figma"
 - "Design accuracy check for the checkout page"
 - "Figma vs code comparison"
+- "ODE review" / "design QA on this link"
+- "Check this staging URL against the Figma design"
 - "Migration audit" (e.g. old design system → new)
-- Any request pairing a Figma link with page routes or file paths and asking for a written report
+- Any request pairing a Figma link with a page URL or file paths and asking for a written report
 
 ---
 
 ## Inputs required
 
-| Input | Description |
-|---|---|
-| **Figma link** | File URL and ideally the specific frame/node link |
-| **Page route(s) or component path(s)** | The routes or file paths to audit |
-| **Source files** | Paste contents or use your editor's "Add to chat" feature |
-| **Design system package names** | e.g. `@acme/ui-core`, `@acme/tokens` |
+### URL mode (designer / ODE workflow)
 
-Optional but improves accuracy:
-- Screenshots of the rendered page (desktop + mobile)
-- Known migration status (e.g. "migrating from styled-components to Tailwind")
-- Names of deprecated libraries to flag explicitly
+| Input | Required? |
+|---|---|
+| Figma link (file URL + ideally specific frame/node) | Required |
+| Live URL (ODE, staging, or production link) | Required |
+| Page or section name | Required |
+| Design system token prefix / CSS variable convention | Recommended |
+| Known deprecated libraries or patterns to flag | Optional |
+
+### Codebase mode (engineer workflow)
+
+| Input | Required? |
+|---|---|
+| Figma link (file URL + ideally specific frame/node) | Required |
+| Page route(s) or component path(s) | Required |
+| Source files (paste or "Add to chat") | Required |
+| Design system package names (e.g. `@acme/ui-core`) | Recommended |
 
 Claude will ask for any missing required inputs before starting.
 
@@ -51,16 +73,16 @@ Claude will ask for any missing required inputs before starting.
 # [Page Name] Design Accuracy Audit
 ├── Scope
 ├── Figma MCP Status
+├── Data Source Status              ← URL mode only: CSS files fetched, tokens found
 ├── Overall Assessment
-├── Design System Usage Summary   ← table with ✅ / ⚠️ / ❌ / 🔲 status per section
-├── Migration Status by Area
-│   ├── Clearly migrated
-│   ├── Partially migrated / still bespoke
-│   └── Not migrated / still on legacy stack
-├── Findings                      ← numbered, ordered High → Medium → Low
+├── Design vs Page: Property Comparison Table   ← Figma value vs page value, per property
+├── Token Usage Summary             ← URL mode: token refs vs hardcoded values by type
+├── Design System Usage Summary     ← Codebase mode: ✅ / ⚠️ / ❌ / 🔲 per section
+├── Migration Status by Area        ← Codebase mode
+├── Findings                        ← numbered, ordered High → Medium → Low
 ├── Concrete Flags
 │   ├── High confidence issues
-│   └── Not currently true        ← explicit list of false assumptions the audit disproved
+│   └── Not currently true          ← explicit list of false assumptions the audit disproved
 ├── Where the Page Still Needs Work
 └── Bottom Line
 ```
@@ -71,35 +93,42 @@ Claude will ask for any missing required inputs before starting.
 
 | Level | Meaning |
 |---|---|
-| **High** | Visible design deviation or deprecated library usage — would be caught in design review |
-| **Medium** | Correct library but bespoke overrides that create drift or maintenance risk |
+| **High** | Visible design deviation a user or designer would notice: wrong color, spacing off by >4px, wrong font size |
+| **Medium** | Correct visual value but hardcoded instead of using a token, or bespoke override creating drift risk |
 | **Low** | Cleanup opportunity: arbitrary constants, minor token inconsistency, no visible impact |
 
 ---
 
 ## What the audit covers
 
-**Always audited (no Figma access needed):**
+**URL mode — always audited:**
+- Color values on key elements vs Figma color spec
+- Spacing (padding, gap, margin) vs Figma layout spec
+- Typography (size, weight, line height) vs Figma typography spec
+- Token usage: CSS custom properties (`var(--*)`) vs hardcoded values
+- Tailwind arbitrary value detection (`px-[28px]`, `bg-[#1a1a2e]`)
+- Design system fingerprint (Radix, MUI, Chakra, custom DS, or none)
+- Border radius, border color accuracy
+
+**Codebase mode — always audited:**
 - Design system library imports — current vs legacy vs bespoke
 - Hardcoded constants vs token usage (arbitrary widths, gaps, heights, z-indices)
 - Component mapping per section
 - Mobile vs desktop container separation
-- Override and wrapper composition patterns
 
-**Audited when Figma data is available:**
-- Spacing, padding, and gap value parity
-- Typography (size, weight, line height) parity
-- Color token accuracy
+**Both modes — when Figma data is available:**
+- Exact spacing, typography, and color parity against the Figma frame
+- Component name mapping (Figma component → code component)
 - Responsive breakpoint alignment
 
 ---
 
-## What it will NOT flag
+## URL mode limitations
 
-- Correct usage — that goes in "Migration Status → Clearly migrated", not findings
-- Code style issues unrelated to design (naming, tests, performance)
-- Components outside the audited route (global nav, footer, other pages)
-- Speculation without specific file + pattern evidence
+- **JS-rendered SPAs**: If the page renders via JavaScript, the fetched HTML may be an empty shell. The audit covers what is present in the initial HTML and CSS files only.
+- **CSS-in-JS**: Styles injected by styled-components or Emotion are not in CSS files — only in the browser runtime. URL mode cannot see them; switch to Codebase mode.
+- **Authentication-gated pages**: If the URL redirects to a login page, the audit stops and reports this.
+- **Computed vs authored styles**: CSS cascade overrides are not always visible from authored CSS alone.
 
 ---
 
@@ -112,27 +141,30 @@ Figma:get_variable_defs     ← token/variable definitions
 Figma:get_metadata          ← fallback
 ```
 
-If all Figma calls fail, the audit continues with code-only analysis. The report notes exactly what was and wasn't available and flags any findings that couldn't be cross-referenced against the design.
+If all Figma calls fail, the audit continues with page/code-only analysis and notes exactly
+what was and wasn't available.
 
 ---
 
-## Example finding (strong vs weak)
+## Example finding (URL mode)
 
 **Weak** — do not write findings like this:
-> The layout appears to use custom spacing values rather than design tokens.
+> The hero section appears to have less padding than the design.
 
-No file path, no specific value, "appears to" is not audit language.
+No CSS source, no Figma value, no page value. Not audit language.
 
 **Strong** — findings must look like this:
-> **3. Section layout still relies on repeated arbitrary values**
-> **Severity:** Medium | **Area:** Page shell
-> **Files:** `src/containers/desktop/productListPage/index.tsx`
+> **2. Hero section vertical padding is 32px on the page vs 48px in Figma**
+> **Severity:** High | **Area:** Hero section
+> **Evidence source:** `.hero-section` rule in `main.abc123.css`
 >
-> The page shell defines its own width constants instead of shared layout tokens. Figma specifies max-content-width of 1200px; code uses `[75rem]` and `[62.5rem]` as separate arbitrary values.
+> The Figma frame specifies 48px vertical padding; the live page applies 32px.
+> This is a visible gap — the section appears more cramped than designed on desktop.
 >
-> ```tsx
-> className="max-w-[75rem] min-w-[62.5rem] gap-[28px]"
+> ```css
+> .hero-section { padding: 32px 24px; }
 > ```
-> **Fix:** Extract into a named layout token or shared constant.
+> **Figma reference:** 48px | **Page value:** 32px
+> **Fix:** Update to `padding: 48px 24px` or `var(--spacing-12)`.
 
-Every finding must point to a specific file path and a specific code pattern. If it can't, it's not a finding.
+Every URL-mode finding must cite both the Figma value and the CSS source with the page value.
